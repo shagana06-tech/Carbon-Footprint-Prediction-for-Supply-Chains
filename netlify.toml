@@ -1,0 +1,17 @@
+# Netlify Configuration
+# The frontend (React/Vite) is built from the `frontend` subdirectory.
+# Netlify Functions (serverless) proxy API calls to the backend.
+
+[build]
+  base    = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# SPA Routing — redirect all routes to index.html so React Router works
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
