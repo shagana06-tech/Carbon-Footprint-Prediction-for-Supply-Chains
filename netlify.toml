@@ -1,16 +1,40 @@
-# Netlify Configuration
-# The frontend (React/Vite) is built from the `frontend` subdirectory.
-# Netlify Functions (serverless) proxy API calls to the backend.
+# ─── Netlify Configuration ────────────────────────────────────────────────────
+# Frontend: React/Vite built from frontend/
+# Backend:  Express wrapped as a Netlify Function (serverless-http)
+#
+# Environment variables to set in Netlify Dashboard → Site Settings → Env Vars:
+#   MONGODB_URI     = <your Atlas connection string>
+#   JWT_SECRET      = <your secret key>
+#   CLIENT_URL      = https://<your-site>.netlify.app
+#   ML_SERVICE_URL  = https://<your-python-service>.railway.app  (optional)
+#   GEMINI_API_KEY  = <your Gemini key>
+#   VITE_API_URL    = /api   (leave as /api — routes through Netlify redirect below)
 
 [build]
-  base    = "frontend"
-  command = "npm run build"
-  publish = "dist"
+  # Run from repo root so we can install both frontend + backend deps
+  command = "cd frontend && npm install && npm run build && cd ../backend-node && npm install"
+  publish = "frontend/dist"
 
 [build.environment]
   NODE_VERSION = "20"
 
-# SPA Routing — redirect all routes to index.html so React Router works
+# ─── Serverless Functions ─────────────────────────────────────────────────────
+# Points to the backend-node/netlify-functions/ dir so esbuild can resolve
+# all Express/Mongoose dependencies from backend-node/node_modules/
+[functions]
+  directory    = "backend-node/netlify-functions"
+  node_bundler = "esbuild"
+
+# ─── Redirects ────────────────────────────────────────────────────────────────
+# ORDER MATTERS: more specific rules must come first.
+
+# 1. Proxy /api/* calls to the serverless Express function
+[[redirects]]
+  from   = "/api/*"
+  to     = "/.netlify/functions/api/:splat"
+  status = 200
+
+# 2. SPA catch-all — let React Router handle all other routes
 [[redirects]]
   from   = "/*"
   to     = "/index.html"
