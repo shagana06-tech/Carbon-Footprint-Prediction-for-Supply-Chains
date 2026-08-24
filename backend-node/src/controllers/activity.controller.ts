@@ -3,6 +3,7 @@ import axios from 'axios';
 import { ActivityEntry } from '../models/activityEntry.model';
 import { CalculationResult } from '../models/calculationResult.model';
 import { ExplainabilityResult } from '../models/explainabilityResult.model';
+import { PredictionLog } from '../models/predictionLog.model';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 // ─── Local Emission Factor Fallback ───────────────────────────────────────────
@@ -280,6 +281,45 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
       },
       { upsert: true, new: true }
     );
+
+    // 9. Persist PredictionLog record for prediction history tracing
+    const deltaKg = totalKg - calcData.totalKg;
+    const deltaPct = calcData.totalKg > 0 ? (deltaKg / calcData.totalKg) * 100 : 0;
+
+    await PredictionLog.create({
+      companyId,
+      period,
+      triggerType: 'recalculation',
+      timestamp: new Date(),
+      prePredictionBaseline: {
+        scope1Kg: calcData.scope1Kg,
+        scope2Kg: calcData.scope2Kg,
+        scope3Kg: calcData.scope3Kg,
+        totalKg: calcData.totalKg,
+        entryCount: entries.length,
+        rawEntries: entries.map(e => ({
+          activityType: e.activityType,
+          quantity: e.quantity,
+          unit: e.unit,
+          region: e.region,
+          equipmentAgeYears: e.equipmentAgeYears || 0,
+          cargoWeightTons: e.cargoWeightTons || 0,
+          supplierId: e.supplierId || '',
+          baselineKg: calcData.entries.find((ce: any) => ce.activityType === e.activityType)?.baselineKg || 0
+        }))
+      },
+      postPredictionModel: {
+        correctedTotalKg: totalKg,
+        scope1Kg,
+        scope2Kg,
+        scope3Kg,
+        deltaKg,
+        deltaPct,
+        modelVersion,
+        topFactors,
+        breakdown
+      }
+    });
 
   } catch (err: any) {
     console.error('Error during emissions orchestration:', err.message);

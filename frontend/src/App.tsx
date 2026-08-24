@@ -9,13 +9,15 @@ import {
   LogOut, 
   Activity, 
   User as UserIcon,
-  Globe
+  Globe,
+  History
 } from 'lucide-react';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import DataEntry from './pages/DataEntry';
 import WhatIfSimulator from './pages/WhatIfSimulator';
 import ReportsArchive from './pages/ReportsArchive';
+import PredictionHistory from './pages/PredictionHistory';
 
 // Setup Toast Notification Context
 interface Toast {
@@ -174,6 +176,7 @@ const MainLayout: React.FC = () => {
             <NavLink to="/data-entry" icon={<FileSpreadsheet size={20} />} label="Data Entry" />
             <NavLink to="/whatif" icon={<Sliders size={20} />} label="What-If Simulator" />
             <NavLink to="/reports" icon={<FileText size={20} />} label="Compliance Reports" />
+            <NavLink to="/history" icon={<History size={20} />} label="Prediction History" />
           </nav>
         </div>
 
@@ -203,6 +206,7 @@ const MainLayout: React.FC = () => {
           <Route path="/data-entry" element={<DataEntry />} />
           <Route path="/whatif" element={<WhatIfSimulator />} />
           <Route path="/reports" element={<ReportsArchive />} />
+          <Route path="/history" element={<PredictionHistory />} />
         </Routes>
       </main>
     </div>

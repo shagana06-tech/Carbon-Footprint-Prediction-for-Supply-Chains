@@ -17,6 +17,12 @@ import {
   getReportsList, 
   downloadReportFile 
 } from './controllers/report.controller';
+import { 
+  getPredictionHistory, 
+  getPredictionLogById, 
+  deletePredictionLog, 
+  seedUserCompanyData 
+} from './controllers/history.controller';
 import { getAiInsights } from './controllers/ai.controller';
 import { authenticateJWT } from './middleware/auth.middleware';
 
@@ -47,6 +53,12 @@ router.get('/reports/download/:id', authenticateJWT, downloadReportFile);
 
 // AI Insights powered by Gemini (Authenticated)
 router.get('/ai/insights', authenticateJWT, getAiInsights);
+
+// Prediction History & Pre-Prediction Audit Logs (Authenticated)
+router.get('/history', authenticateJWT, getPredictionHistory);
+router.get('/history/:id', authenticateJWT, getPredictionLogById);
+router.delete('/history/:id', authenticateJWT, deletePredictionLog);
+router.post('/history/seed-my-company', authenticateJWT, seedUserCompanyData);
 
 export default router;
 
