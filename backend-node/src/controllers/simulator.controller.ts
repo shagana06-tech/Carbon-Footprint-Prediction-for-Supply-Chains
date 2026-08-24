@@ -45,9 +45,18 @@ export const runWhatIfSimulation = async (req: AuthenticatedRequest, res: Respon
       }))
     };
 
-    // 3. Post to ml-service /whatif
-    const whatifResponse = await axios.post(`${ML_SERVICE_URL}/whatif`, whatifPayload);
-    const whatifData = whatifResponse.data; // { projectedTotalKg, savingsKg, breakdown }
+    // 3. Post to ml-service /whatif (with timeout so Netlify doesn't 502)
+    let whatifData: any;
+    try {
+      const whatifResponse = await axios.post(`${ML_SERVICE_URL}/whatif`, whatifPayload, { timeout: 8000 });
+      whatifData = whatifResponse.data;
+    } catch (mlErr: any) {
+      const isOffline = !mlErr.response || mlErr.code === 'ECONNREFUSED' || mlErr.code === 'ETIMEDOUT' || mlErr.code === 'ECONNABORTED';
+      if (isOffline) {
+        return res.status(503).json({ error: 'MLServiceUnavailable', detail: 'The ML simulation service is currently offline. What-if analysis requires the Python service to be running.' });
+      }
+      throw mlErr;
+    }
 
     // 4. Save what-if scenario to DB
     const scenario = new WhatIfScenario({

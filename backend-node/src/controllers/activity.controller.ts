@@ -105,7 +105,7 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
       const calcChunks = chunkArray(rawInputs, CHUNK_SIZE);
       const calcResults = await Promise.all(
         calcChunks.map(chunk =>
-          axios.post(`${ML_SERVICE_URL}/calculate`, { entries: chunk }).then(r => r.data)
+          axios.post(`${ML_SERVICE_URL}/calculate`, { entries: chunk }, { timeout: 3000 }).then(r => r.data)
         )
       );
 
@@ -172,7 +172,7 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
         const correctChunks = chunkArray(correctInputs, CHUNK_SIZE);
         const correctResults = await Promise.all(
           correctChunks.map(chunk =>
-            axios.post(`${ML_SERVICE_URL}/correct`, { entries: chunk }).then(r => r.data)
+            axios.post(`${ML_SERVICE_URL}/correct`, { entries: chunk }, { timeout: 3000 }).then(r => r.data)
           )
         );
 
@@ -225,7 +225,7 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
         const explainChunks = chunkArray(correctInputs, CHUNK_SIZE);
         const explainResults = await Promise.all(
           explainChunks.map(chunk =>
-            axios.post(`${ML_SERVICE_URL}/explain`, { entries: chunk }).then(r => r.data)
+            axios.post(`${ML_SERVICE_URL}/explain`, { entries: chunk }, { timeout: 3000 }).then(r => r.data)
           )
         );
 
