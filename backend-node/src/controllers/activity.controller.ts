@@ -5,6 +5,60 @@ import { CalculationResult } from '../models/calculationResult.model';
 import { ExplainabilityResult } from '../models/explainabilityResult.model';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 
+// ─── Local Emission Factor Fallback ───────────────────────────────────────────
+// Mirrors calculator.py LOCAL_FACTORS so that the Node backend can compute
+// baseline emissions on its own when the Python ML service is unreachable
+// (e.g. on Netlify serverless where no local port 8001 exists).
+const LOCAL_FACTORS: Record<string, { factorValue: number; scope: 1 | 2 | 3 }> = {
+  electricity:  { factorValue: 0.82,  scope: 2 }, // kg CO2e / kWh  (India grid)
+  diesel:       { factorValue: 2.68,  scope: 1 }, // kg CO2e / litre
+  roadTransport:{ factorValue: 0.14,  scope: 3 }, // kg CO2e / ton-km
+  rawMaterial:  { factorValue: 5.9,   scope: 3 }, // kg CO2e / kg
+};
+
+function computeLocalCalculations(entries: any[]) {
+  let scope1 = 0, scope2 = 0, scope3 = 0;
+  const breakdownMap: Record<string, number> = {};
+  const calcEntries: { baselineKg: number; scope: number }[] = [];
+
+  for (const e of entries) {
+    const factor = LOCAL_FACTORS[e.activityType];
+    if (!factor) continue;
+    const quantity   = Number(e.quantity) || 0;
+    const cargo      = Number(e.cargoWeightTons) || 1;
+    const emissionsKg = e.activityType === 'roadTransport'
+      ? quantity * cargo * factor.factorValue
+      : quantity * factor.factorValue;
+
+    if (factor.scope === 1) scope1 += emissionsKg;
+    else if (factor.scope === 2) scope2 += emissionsKg;
+    else scope3 += emissionsKg;
+
+    breakdownMap[e.activityType] = (breakdownMap[e.activityType] || 0) + emissionsKg;
+    calcEntries.push({ baselineKg: emissionsKg, scope: factor.scope });
+  }
+
+  const total = scope1 + scope2 + scope3;
+  const breakdown = Object.keys(breakdownMap).map(type => ({
+    activityType: type,
+    kg: breakdownMap[type],
+    pct: total > 0 ? (breakdownMap[type] / total) * 100 : 0,
+  }));
+
+  return { scope1Kg: scope1, scope2Kg: scope2, scope3Kg: scope3, totalKg: total, breakdown, entries: calcEntries };
+}
+
+// Helper: true when the error is a network-level failure (service unreachable)
+function isNetworkError(err: any): boolean {
+  return (
+    err.code === 'ECONNREFUSED' ||
+    err.code === 'ENOTFOUND' ||
+    err.code === 'ERR_NETWORK' ||
+    err.message === 'Network Error' ||
+    !err.response
+  );
+}
+
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:8001';
 
 // ─── Chunk helper ─────────────────────────────────────────────────────────────
@@ -32,8 +86,7 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
       return;
     }
 
-    // 2. Call /calculate on ML service — chunked for large datasets
-    const calcInputs = entries.map(e => ({
+    const rawInputs = entries.map(e => ({
       activityType: e.activityType,
       quantity: e.quantity,
       unit: e.unit,
@@ -43,37 +96,50 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
       supplierId: e.supplierId || ''
     }));
 
-    const calcChunks = chunkArray(calcInputs, CHUNK_SIZE);
-    const calcResults = await Promise.all(
-      calcChunks.map(chunk =>
-        axios.post(`${ML_SERVICE_URL}/calculate`, { entries: chunk }).then(r => r.data)
-      )
-    );
+    // 2. Call /calculate on ML service — chunked for large datasets
+    //    Falls back to local JS calculator if the service is unreachable (Netlify / no Python process).
+    let calcData: ReturnType<typeof computeLocalCalculations>;
+    let mlServiceOnline = true;
 
-    // Merge chunked calculate results
-    const calcData = {
-      scope1Kg: calcResults.reduce((s, r) => s + (r.scope1Kg || 0), 0),
-      scope2Kg: calcResults.reduce((s, r) => s + (r.scope2Kg || 0), 0),
-      scope3Kg: calcResults.reduce((s, r) => s + (r.scope3Kg || 0), 0),
-      totalKg:  calcResults.reduce((s, r) => s + (r.totalKg  || 0), 0),
-      // Flatten per-entry results preserving original order
-      entries:  calcResults.flatMap(r => r.entries || []),
-      // Merge breakdown maps by activityType
-      breakdown: (() => {
-        const map: Record<string, number> = {};
-        for (const r of calcResults) {
-          for (const b of (r.breakdown || [])) {
-            map[b.activityType] = (map[b.activityType] || 0) + (b.kg || 0);
+    try {
+      const calcChunks = chunkArray(rawInputs, CHUNK_SIZE);
+      const calcResults = await Promise.all(
+        calcChunks.map(chunk =>
+          axios.post(`${ML_SERVICE_URL}/calculate`, { entries: chunk }).then(r => r.data)
+        )
+      );
+
+      // Merge chunked calculate results
+      calcData = {
+        scope1Kg: calcResults.reduce((s, r) => s + (r.scope1Kg || 0), 0),
+        scope2Kg: calcResults.reduce((s, r) => s + (r.scope2Kg || 0), 0),
+        scope3Kg: calcResults.reduce((s, r) => s + (r.scope3Kg || 0), 0),
+        totalKg:  calcResults.reduce((s, r) => s + (r.totalKg  || 0), 0),
+        entries:  calcResults.flatMap(r => r.entries || []),
+        breakdown: (() => {
+          const map: Record<string, number> = {};
+          for (const r of calcResults) {
+            for (const b of (r.breakdown || [])) {
+              map[b.activityType] = (map[b.activityType] || 0) + (b.kg || 0);
+            }
           }
-        }
-        const total = Object.values(map).reduce((s, v) => s + v, 0);
-        return Object.keys(map).map(type => ({
-          activityType: type,
-          kg: map[type],
-          pct: total > 0 ? (map[type] / total) * 100 : 0
-        }));
-      })()
-    };
+          const total = Object.values(map).reduce((s, v) => s + v, 0);
+          return Object.keys(map).map(type => ({
+            activityType: type, kg: map[type],
+            pct: total > 0 ? (map[type] / total) * 100 : 0
+          }));
+        })()
+      };
+    } catch (mlErr: any) {
+      if (isNetworkError(mlErr)) {
+        // ML service is not available — compute locally using built-in factor table
+        console.warn('[recalculate] ML service unreachable, using local emission factors:', mlErr.code || mlErr.message);
+        mlServiceOnline = false;
+        calcData = computeLocalCalculations(rawInputs);
+      } else {
+        throw mlErr; // Re-throw unexpected errors (e.g. 500 from ML service)
+      }
+    }
 
     // 3. Determine the season based on period (YYYY-MM)
     const month = period.split('-')[1];
@@ -92,88 +158,101 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
       season
     }));
 
-    // 5. Call /correct — chunked
-    const correctChunks = chunkArray(correctInputs, CHUNK_SIZE);
-    const correctResults = await Promise.all(
-      correctChunks.map(chunk =>
-        axios.post(`${ML_SERVICE_URL}/correct`, { entries: chunk }).then(r => r.data)
-      )
-    );
-
-    // Merge chunked correct results
-    const correctData = {
-      modelApplied: correctResults.some(r => r.modelApplied),
-      modelVersion: correctResults[0]?.modelVersion || '1.0.0',
-      correctedEntries: correctResults.flatMap(r => r.correctedEntries || [])
-    };
-
+    // 5. Call /correct — chunked. Skip gracefully if ML service is offline.
     let scope1Kg = calcData.scope1Kg;
     let scope2Kg = calcData.scope2Kg;
     let scope3Kg = calcData.scope3Kg;
-    let totalKg = calcData.totalKg;
+    let totalKg  = calcData.totalKg;
     let breakdown = calcData.breakdown;
+    let modelVersion = '1.0.0';
+    let modelApplied = false;
 
-    // If model was successfully applied, adjust emissions using corrected values
-    if (correctData && correctData.modelApplied && Array.isArray(correctData.correctedEntries)) {
-      let s1 = 0, s2 = 0, s3 = 0;
-      const updatedBreakdownMap: Record<string, number> = {};
+    if (mlServiceOnline) {
+      try {
+        const correctChunks = chunkArray(correctInputs, CHUNK_SIZE);
+        const correctResults = await Promise.all(
+          correctChunks.map(chunk =>
+            axios.post(`${ML_SERVICE_URL}/correct`, { entries: chunk }).then(r => r.data)
+          )
+        );
 
-      entries.forEach((e, idx) => {
-        const scopeItem = calcData.entries && calcData.entries[idx] ? calcData.entries[idx] : { scope: 3 };
-        const scope = scopeItem.scope;
-        const correctedObj = correctData.correctedEntries[idx] || { correctedKg: 0 };
-        const correctedKg = typeof correctedObj.correctedKg === 'number' ? correctedObj.correctedKg : 0;
+        const correctData = {
+          modelApplied: correctResults.some(r => r.modelApplied),
+          modelVersion: correctResults[0]?.modelVersion || '1.0.0',
+          correctedEntries: correctResults.flatMap(r => r.correctedEntries || [])
+        };
 
-        if (scope === 1) s1 += correctedKg;
-        else if (scope === 2) s2 += correctedKg;
-        else if (scope === 3) s3 += correctedKg;
+        modelApplied = correctData.modelApplied;
+        modelVersion = correctData.modelVersion;
 
-        updatedBreakdownMap[e.activityType] = (updatedBreakdownMap[e.activityType] || 0) + correctedKg;
-      });
+        // If model was successfully applied, adjust emissions using corrected values
+        if (modelApplied && Array.isArray(correctData.correctedEntries)) {
+          let s1 = 0, s2 = 0, s3 = 0;
+          const updatedBreakdownMap: Record<string, number> = {};
 
-      scope1Kg = s1;
-      scope2Kg = s2;
-      scope3Kg = s3;
-      totalKg = s1 + s2 + s3;
+          entries.forEach((e, idx) => {
+            const scopeItem = calcData.entries && calcData.entries[idx] ? calcData.entries[idx] : { scope: 3 };
+            const scope = scopeItem.scope;
+            const correctedObj = correctData.correctedEntries[idx] || { correctedKg: 0 };
+            const correctedKg = typeof correctedObj.correctedKg === 'number' ? correctedObj.correctedKg : 0;
 
-      // Rebuild the breakdown percentage based on corrected values
-      breakdown = Object.keys(updatedBreakdownMap).map(type => ({
-        activityType: type,
-        kg: updatedBreakdownMap[type],
-        pct: totalKg > 0 ? (updatedBreakdownMap[type] / totalKg) * 100 : 0
-      }));
+            if (scope === 1) s1 += correctedKg;
+            else if (scope === 2) s2 += correctedKg;
+            else if (scope === 3) s3 += correctedKg;
+
+            updatedBreakdownMap[e.activityType] = (updatedBreakdownMap[e.activityType] || 0) + correctedKg;
+          });
+
+          scope1Kg = s1; scope2Kg = s2; scope3Kg = s3;
+          totalKg = s1 + s2 + s3;
+          breakdown = Object.keys(updatedBreakdownMap).map(type => ({
+            activityType: type,
+            kg: updatedBreakdownMap[type],
+            pct: totalKg > 0 ? (updatedBreakdownMap[type] / totalKg) * 100 : 0
+          }));
+        }
+      } catch (mlErr: any) {
+        if (!isNetworkError(mlErr)) throw mlErr;
+        console.warn('[recalculate] ML /correct unreachable, using baseline values');
+      }
     }
 
-    // 6. Call /explain — chunked (only need first chunk for SHAP, rest are aggregated)
-    const explainChunks = chunkArray(correctInputs, CHUNK_SIZE);
-    const explainResults = await Promise.all(
-      explainChunks.map(chunk =>
-        axios.post(`${ML_SERVICE_URL}/explain`, { entries: chunk }).then(r => r.data)
-      )
-    );
+    // 6. Call /explain — chunked. Skip gracefully if ML service is offline.
+    let topFactors: any[] = [];
 
-    // Merge SHAP topFactors by averaging contribution percentages across chunks
-    const explainData = (() => {
-      const factorMap: Record<string, { total: number; count: number; plainLanguage: string }> = {};
-      for (const r of explainResults) {
-        for (const f of (r.topFactors || [])) {
-          if (!factorMap[f.feature]) {
-            factorMap[f.feature] = { total: 0, count: 0, plainLanguage: f.plainLanguage || '' };
+    if (mlServiceOnline) {
+      try {
+        const explainChunks = chunkArray(correctInputs, CHUNK_SIZE);
+        const explainResults = await Promise.all(
+          explainChunks.map(chunk =>
+            axios.post(`${ML_SERVICE_URL}/explain`, { entries: chunk }).then(r => r.data)
+          )
+        );
+
+        // Merge SHAP topFactors by averaging contribution percentages across chunks
+        const factorMap: Record<string, { total: number; count: number; plainLanguage: string }> = {};
+        for (const r of explainResults) {
+          for (const f of (r.topFactors || [])) {
+            if (!factorMap[f.feature]) {
+              factorMap[f.feature] = { total: 0, count: 0, plainLanguage: f.plainLanguage || '' };
+            }
+            factorMap[f.feature].total += f.contributionPct || 0;
+            factorMap[f.feature].count += 1;
           }
-          factorMap[f.feature].total += f.contributionPct || 0;
-          factorMap[f.feature].count += 1;
         }
+        topFactors = Object.entries(factorMap)
+          .map(([feature, v]) => ({
+            feature,
+            contributionPct: v.total / v.count,
+            plainLanguage: v.plainLanguage
+          }))
+          .sort((a, b) => b.contributionPct - a.contributionPct)
+          .slice(0, 10);
+      } catch (mlErr: any) {
+        if (!isNetworkError(mlErr)) throw mlErr;
+        console.warn('[recalculate] ML /explain unreachable, skipping SHAP');
       }
-      const topFactors = Object.entries(factorMap)
-        .map(([feature, v]) => ({
-          feature,
-          contributionPct: v.total / v.count,
-          plainLanguage: v.plainLanguage
-        }))
-        .sort((a, b) => b.contributionPct - a.contributionPct)
-        .slice(0, 10);
-      return { topFactors };
-    })();
+    }
 
     // 7. Persist calculation results to database
     const calculationResult = await CalculationResult.findOneAndUpdate(
@@ -184,9 +263,9 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
         scope3Kg,
         totalKg,
         baselineTotalKg: calcData.totalKg,
-        correctedTotalKg: correctData.modelApplied ? totalKg : calcData.totalKg,
+        correctedTotalKg: modelApplied ? totalKg : calcData.totalKg,
         breakdown,
-        modelVersion: correctData.modelVersion || '1.0.0',
+        modelVersion,
         createdAt: new Date()
       },
       { upsert: true, new: true }
@@ -196,7 +275,7 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
     await ExplainabilityResult.findOneAndUpdate(
       { calculationResultId: calculationResult._id },
       {
-        topFactors: explainData.topFactors || [],
+        topFactors,
         createdAt: new Date()
       },
       { upsert: true, new: true }
