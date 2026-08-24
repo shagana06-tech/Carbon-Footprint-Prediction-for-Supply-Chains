@@ -156,7 +156,7 @@ const WhatIfSimulator: React.FC = () => {
           </p>
         </div>
       ) : (
-        <section style={{ display: 'grid', gridTemplateColumns: '5fr 7fr', gap: '32px' }}>
+        <section className="two-col-layout">
           {/* Sliders Control Panel */}
           <div className="glass-panel" style={{ padding: '32px' }}>
             <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '10px' }}>

@@ -10,7 +10,9 @@ import {
   Activity, 
   User as UserIcon,
   Globe,
-  History
+  History,
+  Menu,
+  X
 } from 'lucide-react';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -136,6 +138,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 const MainLayout: React.FC = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleLogout = () => {
     logout();
@@ -143,23 +146,30 @@ const MainLayout: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
+    <div className="app-container">
+      {/* Mobile Top Navigation Bar */}
+      <div className="mobile-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Activity color="var(--primary)" size={24} />
+          <h2 style={{ fontSize: '16px', margin: 0, fontWeight: 700 }} className="text-gradient">CarbonIQ</h2>
+        </div>
+
+        <button 
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          style={{ background: 'transparent', border: 'none', color: 'var(--text-main)', cursor: 'pointer', padding: '6px' }}
+        >
+          {mobileMenuOpen ? <X size={26} /> : <Menu size={26} />}
+        </button>
+      </div>
+
+      {/* Backdrop Overlay for Mobile */}
+      <div 
+        className={`mobile-overlay ${mobileMenuOpen ? 'open' : ''}`} 
+        onClick={() => setMobileMenuOpen(false)} 
+      />
+
       {/* Sidebar navigation */}
-      <aside className="glass-panel" style={{ 
-        width: '260px', 
-        borderRadius: 0, 
-        borderRight: '1px solid var(--border-color)',
-        borderTop: 'none',
-        borderBottom: 'none',
-        borderLeft: 'none',
-        padding: '24px',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-        position: 'fixed',
-        height: '100vh',
-        background: 'rgba(9, 13, 22, 0.85)'
-      }}>
+      <aside className={`glass-panel sidebar ${mobileMenuOpen ? 'open' : ''}`}>
         <div>
           {/* Logo Brand */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '40px', padding: '0 8px' }}>
@@ -172,11 +182,11 @@ const MainLayout: React.FC = () => {
 
           {/* Nav List */}
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <NavLink to="/" icon={<LayoutDashboard size={20} />} label="Dashboard" />
-            <NavLink to="/data-entry" icon={<FileSpreadsheet size={20} />} label="Data Entry" />
-            <NavLink to="/whatif" icon={<Sliders size={20} />} label="What-If Simulator" />
-            <NavLink to="/reports" icon={<FileText size={20} />} label="Compliance Reports" />
-            <NavLink to="/history" icon={<History size={20} />} label="Prediction History" />
+            <NavLink to="/" icon={<LayoutDashboard size={20} />} label="Dashboard" onClick={() => setMobileMenuOpen(false)} />
+            <NavLink to="/data-entry" icon={<FileSpreadsheet size={20} />} label="Data Entry" onClick={() => setMobileMenuOpen(false)} />
+            <NavLink to="/whatif" icon={<Sliders size={20} />} label="What-If Simulator" onClick={() => setMobileMenuOpen(false)} />
+            <NavLink to="/reports" icon={<FileText size={20} />} label="Compliance Reports" onClick={() => setMobileMenuOpen(false)} />
+            <NavLink to="/history" icon={<History size={20} />} label="Prediction History" onClick={() => setMobileMenuOpen(false)} />
           </nav>
         </div>
 
@@ -200,7 +210,7 @@ const MainLayout: React.FC = () => {
       </aside>
 
       {/* Main Content Area */}
-      <main style={{ marginLeft: '260px', flex: 1, minHeight: '100vh', background: 'transparent', padding: '32px' }}>
+      <main className="main-content">
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/data-entry" element={<DataEntry />} />
@@ -214,14 +224,17 @@ const MainLayout: React.FC = () => {
 };
 
 // Sidebar Navigation Link Helper
-const NavLink: React.FC<{ to: string; icon: React.ReactNode; label: string }> = ({ to, icon, label }) => {
+const NavLink: React.FC<{ to: string; icon: React.ReactNode; label: string; onClick?: () => void }> = ({ to, icon, label, onClick }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const isActive = location.pathname === to;
 
   return (
     <button 
-      onClick={() => navigate(to)}
+      onClick={() => {
+        navigate(to);
+        if (onClick) onClick();
+      }}
       style={{
         display: 'flex',
         alignItems: 'center',

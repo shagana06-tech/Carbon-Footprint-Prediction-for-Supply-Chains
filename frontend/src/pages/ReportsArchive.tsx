@@ -132,7 +132,7 @@ const ReportsArchive: React.FC = () => {
         <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginTop: '4px' }}>Compile emission records into audit-inspired disclosure summaries matching BRSR or CSRD guidelines</p>
       </header>
 
-      <section style={{ display: 'grid', gridTemplateColumns: '5fr 7fr', gap: '32px' }}>
+      <section className="two-col-layout">
         {/* Document Generator Form */}
         <div className="glass-panel" style={{ padding: '32px', height: 'fit-content' }}>
           <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '10px' }}>

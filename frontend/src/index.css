@@ -1,4 +1,4 @@
-/* Custom Design System & CSS Reset */
+/* Custom Design System & Responsive Layout Engine */
 * {
   margin: 0;
   padding: 0;
@@ -31,6 +31,8 @@
   --success: #10b981;
   --warning: #f59e0b;
   --error: #ef4444;
+
+  --sidebar-width: 260px;
 }
 
 body {
@@ -97,6 +99,7 @@ a:hover {
   cursor: pointer;
   transition: all 0.2s ease;
   gap: 8px;
+  white-space: nowrap;
 }
 
 .btn-primary {
@@ -154,12 +157,54 @@ a:hover {
   box-shadow: 0 0 0 2px var(--border-glow);
 }
 
-/* Dashboard Layout */
+/* Responsive Grid & Layout Engine */
+.app-container {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: var(--sidebar-width);
+  border-radius: 0;
+  border-right: 1px solid var(--border-color);
+  border-top: none;
+  border-bottom: none;
+  border-left: none;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: fixed;
+  height: 100vh;
+  background: rgba(9, 13, 22, 0.95);
+  z-index: 1000;
+  transition: transform 0.3s ease, width 0.3s ease;
+}
+
+.mobile-header {
+  display: none;
+}
+
+.mobile-overlay {
+  display: none;
+}
+
+.main-content {
+  margin-left: var(--sidebar-width);
+  flex: 1;
+  min-height: 100vh;
+  background: transparent;
+  padding: 32px;
+  transition: margin-left 0.3s ease, padding 0.3s ease;
+}
+
+/* Dashboard Grid System */
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(12, 1fr);
   gap: 24px;
-  padding: 24px;
+  padding: 0;
+  margin-bottom: 24px;
 }
 
 .metric-card {
@@ -178,6 +223,18 @@ a:hover {
 .full-card {
   grid-column: span 12;
   padding: 24px;
+}
+
+.two-col-layout {
+  display: grid;
+  grid-template-columns: 5fr 7fr;
+  gap: 32px;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Sliders inside Simulator */
@@ -254,4 +311,165 @@ a:hover {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
+}
+
+/* ==========================================================================
+   RESPONSIVE MEDIA QUERIES (Mobile, Tablet, Laptop, Desktop PC)
+   ========================================================================== */
+
+/* 1. Laptop & Desktop Adjustments (1024px - 1280px) */
+@media screen and (max-width: 1280px) {
+  .metric-card {
+    grid-column: span 6;
+  }
+  .chart-card {
+    grid-column: span 12;
+  }
+  .two-col-layout {
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+}
+
+/* 2. Tablet Layout (768px - 1023px) */
+@media screen and (max-width: 1023px) {
+  .mobile-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 64px;
+    background: rgba(9, 13, 22, 0.95);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border-color);
+    padding: 0 20px;
+    z-index: 1100;
+  }
+
+  .sidebar {
+    transform: translateX(-100%);
+    box-shadow: 10px 0 30px rgba(0,0,0,0.5);
+    top: 0;
+    bottom: 0;
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .mobile-overlay {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(4px);
+    z-index: 999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+  }
+
+  .mobile-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .main-content {
+    margin-left: 0;
+    padding: 24px;
+    margin-top: 64px;
+  }
+
+  .two-col-layout {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .dashboard-grid {
+    gap: 16px;
+  }
+
+  .metric-card {
+    grid-column: span 6;
+    padding: 20px;
+  }
+
+  .chart-card {
+    grid-column: span 12;
+    padding: 20px;
+  }
+
+  .full-card {
+    grid-column: span 12;
+    padding: 20px;
+    flex-direction: column !important;
+  }
+
+  .full-card > div {
+    width: 100% !important;
+    border-left: none !important;
+    padding-left: 0 !important;
+    border-top: 1px solid var(--border-color);
+    padding-top: 20px;
+  }
+}
+
+/* 3. Mobile Phones (< 768px) */
+@media screen and (max-width: 767px) {
+  .main-content {
+    padding: 16px;
+    margin-top: 64px;
+  }
+
+  header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 16px !important;
+    margin-bottom: 24px !important;
+  }
+
+  header > div {
+    width: 100%;
+  }
+
+  header h1 {
+    font-size: 24px !important;
+  }
+
+  .metric-card {
+    grid-column: span 12;
+  }
+
+  .chart-card {
+    padding: 16px;
+    min-height: auto;
+  }
+
+  .chart-card > div[style*="flex"] {
+    flex-direction: column !important;
+    height: auto !important;
+  }
+
+  .chart-card > div > div[style*="50%"] {
+    width: 100% !important;
+    height: 200px !important;
+    padding-left: 0 !important;
+  }
+
+  .form-group {
+    margin-bottom: 16px;
+  }
+
+  .toast {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+  }
 }
