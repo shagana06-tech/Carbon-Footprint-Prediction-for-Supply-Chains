@@ -64,31 +64,38 @@ const WhatIfSimulator: React.FC = () => {
   // Run simulation
   const runSimulation = async () => {
     if (!selectedCalcId || !token) return;
+
+    const changes = [];
+    if (roadRailShift > 0) {
+      changes.push({
+        activityType: 'roadTransport',
+        adjustmentType: 'shift_to_rail',
+        adjustmentPct: roadRailShift
+      });
+    }
+    if (renewableShare > 0) {
+      changes.push({
+        activityType: 'electricity',
+        adjustmentType: 'renewable_share',
+        adjustmentPct: renewableShare
+      });
+    }
+    if (supplierSwap > 0) {
+      changes.push({
+        activityType: 'rawMaterial',
+        adjustmentType: 'supplier_swap',
+        adjustmentPct: supplierSwap
+      });
+    }
+
+    // If no sliders are active, reset to baseline (no API call needed)
+    if (changes.length === 0) {
+      setSimResults(null);
+      return;
+    }
+
     setLoading(true);
     try {
-      const changes = [];
-      if (roadRailShift > 0) {
-        changes.push({
-          activityType: 'roadTransport',
-          adjustmentType: 'shift_to_rail',
-          adjustmentPct: roadRailShift
-        });
-      }
-      if (renewableShare > 0) {
-        changes.push({
-          activityType: 'electricity',
-          adjustmentType: 'renewable_share',
-          adjustmentPct: renewableShare
-        });
-      }
-      if (supplierSwap > 0) {
-        changes.push({
-          activityType: 'rawMaterial',
-          adjustmentType: 'supplier_swap',
-          adjustmentPct: supplierSwap
-        });
-      }
-
       const res = await axios.post(`${API_URL}/simulator/whatif`, {
         baseCalculationResultId: selectedCalcId,
         changes
@@ -97,8 +104,9 @@ const WhatIfSimulator: React.FC = () => {
       });
 
       setSimResults(res.data);
-    } catch (err) {
-      showToast('Simulation calculation error', 'error');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || 'Simulation calculation error';
+      showToast(detail, 'error');
     } finally {
       setLoading(false);
     }
