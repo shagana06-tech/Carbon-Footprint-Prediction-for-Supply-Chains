@@ -27,16 +27,23 @@ interface ParsedRow {
 }
 
 // ─── Smart column resolver ────────────────────────────────────────────────────
+// ─── Smart column resolver ────────────────────────────────────────────────────
 const findCol = (headers: string[], aliases: string[]): string | undefined =>
-  headers.find(h => aliases.some(a => a.toLowerCase() === h.toLowerCase().trim()));
+  headers.find(h => {
+    const cleanH = h.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return aliases.some(a => {
+      const cleanA = a.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return cleanH === cleanA || cleanH.includes(cleanA);
+    });
+  });
 
 // Maps any common label to a canonical ActivityType
 const normalizeActivityType = (val: string): ActivityType => {
   const v = (val ?? '').toLowerCase().trim();
-  if (v.includes('electric') || v.includes('grid') || v.includes('power') || v === 'kwh') return 'electricity';
-  if (v.includes('diesel') || v.includes('fuel'))                                           return 'diesel';
-  if (v.includes('road') || v.includes('transport') || v.includes('freight') || v.includes('logistic')) return 'roadTransport';
-  if (v.includes('raw') || v.includes('material') || v.includes('cotton'))                 return 'rawMaterial';
+  if (v.includes('electric') || v.includes('ev') || v.includes('bev') || v.includes('phev') || v.includes('grid') || v.includes('power') || v.includes('battery') || v.includes('kwh')) return 'electricity';
+  if (v.includes('diesel') || v.includes('ice') || v.includes('petrol') || v.includes('gasoline') || v.includes('fuel') || v.includes('combustion')) return 'diesel';
+  if (v.includes('road') || v.includes('transport') || v.includes('freight') || v.includes('logistic') || v.includes('truck') || v.includes('vehicle') || v.includes('drive')) return 'roadTransport';
+  if (v.includes('raw') || v.includes('material') || v.includes('weight') || v.includes('capacity') || v.includes('cotton') || v.includes('steel') || v.includes('spec')) return 'rawMaterial';
   return 'electricity'; // safe default
 };
 
@@ -48,30 +55,63 @@ const sheetToRows = (jsonRows: any[], defaultPeriod: string): ParsedRow[] => {
   if (!jsonRows.length) return [];
   const headers = Object.keys(jsonRows[0]);
 
-  const pCol   = findCol(headers, ['period','Period','PERIOD','month','Month','date','Date']);
-  const tCol   = findCol(headers, ['activityType','activity_type','ActivityType','Activity Type','type','Type','activity','Activity','category','Category']);
-  const qCol   = findCol(headers, ['quantity','Quantity','qty','Qty','amount','Amount','value','Value']);
-  const uCol   = findCol(headers, ['unit','Unit','units','Units','measure','Measure']);
-  const rCol   = findCol(headers, ['region','Region','location','Location','country','Country','area','Area']);
-  const ageCol = findCol(headers, ['equipmentAgeYears','equipment_age','Equipment Age','equipmentAge','age','Age']);
-  const cCol   = findCol(headers, ['cargoWeightTons','cargo_weight','Cargo Weight','cargoWeight','cargo','Cargo','weight','Weight']);
-  const sCol   = findCol(headers, ['supplierId','supplier_id','Supplier ID','supplierID','supplier','Supplier']);
+  const pCol   = findCol(headers, ['period', 'month', 'date', 'year', 'model_year', 'modelyear', 'fy', 'fiscalyear', 'time']);
+  const tCol   = findCol(headers, ['activitytype', 'activity', 'type', 'category', 'fuel', 'fueltype', 'drivetrain', 'powertrain', 'vehicle', 'vehicletype', 'engine']);
+  let qCol     = findCol(headers, ['quantity', 'qty', 'amount', 'value', 'volume', 'count', 'capacity', 'batterycapacity', 'range', 'sales', 'units', 'weight', 'curbweight', 'grossweight', 'distance', 'mileage', 'consumption', 'efficiency', 'emissions', 'co2emissions', 'power', 'horsepower']);
+  const uCol   = findCol(headers, ['unit', 'units', 'measure', 'measurement']);
+  const rCol   = findCol(headers, ['region', 'location', 'country', 'area', 'market', 'state']);
+  const ageCol = findCol(headers, ['equipmentageyears', 'equipmentage', 'age', 'vehicleage', 'modelage', 'year']);
+  const cCol   = findCol(headers, ['cargoweighttons', 'cargoweight', 'cargo', 'weight', 'grossweight', 'payload']);
+  const sCol   = findCol(headers, ['supplierid', 'supplier', 'make', 'brand', 'vendor', 'manufacturer', 'model']);
+
+  // Dynamic Numeric Fallback: If no explicit quantity column matched by header name, find the first numeric column in jsonRows with positive values
+  if (!qCol) {
+    qCol = headers.find(h => {
+      let positiveNumericCount = 0;
+      for (let i = 0; i < Math.min(30, jsonRows.length); i++) {
+        const valStr = String(jsonRows[i][h] ?? '').replace(/[^0-9.-]/g, '');
+        const val = parseFloat(valStr);
+        if (!isNaN(val) && val > 0) positiveNumericCount++;
+      }
+      return positiveNumericCount >= Math.min(5, Math.ceil(jsonRows.length * 0.2));
+    });
+  }
 
   const rows: ParsedRow[] = [];
   for (const row of jsonRows) {
-    const rawQty = qCol ? parseFloat(String(row[qCol] ?? '')) : NaN;
+    const rawValStr = qCol ? String(row[qCol] ?? '').replace(/[^0-9.-]/g, '') : '';
+    let rawQty = parseFloat(rawValStr);
+
+    // Row-level numeric extraction fallback
+    if (isNaN(rawQty) || rawQty <= 0) {
+      for (const h of headers) {
+        if (h === pCol) continue;
+        const v = parseFloat(String(row[h] ?? '').replace(/[^0-9.-]/g, ''));
+        if (!isNaN(v) && v > 0) {
+          rawQty = v;
+          break;
+        }
+      }
+    }
+
     if (isNaN(rawQty) || rawQty <= 0) continue;
 
     const actType = tCol ? normalizeActivityType(String(row[tCol])) : 'electricity';
-    const cargo   = cCol ? parseFloat(String(row[cCol] ?? '')) : NaN;
+    const cargoStr = cCol ? String(row[cCol] ?? '').replace(/[^0-9.-]/g, '') : '';
+    const cargo    = parseFloat(cargoStr);
+
+    let rawPeriod = pCol ? String(row[pCol]).trim() : defaultPeriod;
+    if (/^\d{4}$/.test(rawPeriod)) {
+      rawPeriod = `${rawPeriod}-12`;
+    }
 
     rows.push({
-      period:            pCol ? String(row[pCol]).trim() : defaultPeriod,
+      period:            rawPeriod || defaultPeriod,
       activityType:      actType,
       quantity:          rawQty,
       unit:              uCol ? (String(row[uCol]).trim() || defaultUnit(actType)) : defaultUnit(actType),
       region:            rCol ? (String(row[rCol]).trim() || 'India') : 'India',
-      equipmentAgeYears: ageCol ? (parseInt(String(row[ageCol])) || 5) : 5,
+      equipmentAgeYears: ageCol ? (parseInt(String(row[ageCol]).replace(/[^0-9]/g, '')) || 5) : 5,
       cargoWeightTons:   actType === 'roadTransport'
                            ? (!isNaN(cargo) && cargo > 0 ? cargo : 1)
                            : undefined,
