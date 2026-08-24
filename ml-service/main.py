@@ -3,6 +3,7 @@ import logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from calculator import process_calculations
@@ -17,6 +18,24 @@ logging.basicConfig(
 logger = logging.getLogger("ml-service")
 
 app = FastAPI(title="Carbon ML & Calculation Service")
+
+# ─── Body-size limit middleware ────────────────────────────────────────────────
+# Raise the request body limit to 100 MB so large-dataset bulk calculations
+# (thousands of activity entries chunked by the Node backend) never hit 413.
+class LargeBodyMiddleware(BaseHTTPMiddleware):
+    MAX_BODY_SIZE = 100 * 1024 * 1024  # 100 MB
+
+    async def dispatch(self, request: Request, call_next):
+        if request.headers.get("content-length"):
+            content_length = int(request.headers["content-length"])
+            if content_length > self.MAX_BODY_SIZE:
+                return JSONResponse(
+                    status_code=413,
+                    content={"error": "RequestTooLarge", "detail": f"Request body exceeds {self.MAX_BODY_SIZE // (1024*1024)} MB limit"}
+                )
+        return await call_next(request)
+
+app.add_middleware(LargeBodyMiddleware)
 
 # Setup CORS
 app.add_middleware(

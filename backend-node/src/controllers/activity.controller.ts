@@ -7,6 +7,19 @@ import { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:8001';
 
+// ─── Chunk helper ─────────────────────────────────────────────────────────────
+// Splits an array into sub-arrays of at most `size` items so we never send a
+// payload that exceeds FastAPI / Express body-size limits for large datasets.
+const chunkArray = <T>(arr: T[], size: number): T[][] => {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+};
+
+const CHUNK_SIZE = 500; // max entries per ML-service request
+
 // Orchestrates the emissions calculations by contacting the Python ML service
 export const recalculateEmissions = async (companyId: string, period: string) => {
   try {
@@ -19,21 +32,48 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
       return;
     }
 
-    // 2. Call /calculate on ML service to get baseline emissions
-    const calcPayload = {
-      entries: entries.map(e => ({
-        activityType: e.activityType,
-        quantity: e.quantity,
-        unit: e.unit,
-        region: e.region,
-        equipmentAgeYears: e.equipmentAgeYears || 0,
-        cargoWeightTons: e.cargoWeightTons || 0,
-        supplierId: e.supplierId || ''
-      }))
-    };
+    // 2. Call /calculate on ML service — chunked for large datasets
+    const calcInputs = entries.map(e => ({
+      activityType: e.activityType,
+      quantity: e.quantity,
+      unit: e.unit,
+      region: e.region,
+      equipmentAgeYears: e.equipmentAgeYears || 0,
+      cargoWeightTons: e.cargoWeightTons || 0,
+      supplierId: e.supplierId || ''
+    }));
 
-    const calcResponse = await axios.post(`${ML_SERVICE_URL}/calculate`, calcPayload);
-    const calcData = calcResponse.data; // { scope1Kg, scope2Kg, scope3Kg, totalKg, breakdown, entries: [{ baselineKg, scope }] }
+    const calcChunks = chunkArray(calcInputs, CHUNK_SIZE);
+    const calcResults = await Promise.all(
+      calcChunks.map(chunk =>
+        axios.post(`${ML_SERVICE_URL}/calculate`, { entries: chunk }).then(r => r.data)
+      )
+    );
+
+    // Merge chunked calculate results
+    const calcData = {
+      scope1Kg: calcResults.reduce((s, r) => s + (r.scope1Kg || 0), 0),
+      scope2Kg: calcResults.reduce((s, r) => s + (r.scope2Kg || 0), 0),
+      scope3Kg: calcResults.reduce((s, r) => s + (r.scope3Kg || 0), 0),
+      totalKg:  calcResults.reduce((s, r) => s + (r.totalKg  || 0), 0),
+      // Flatten per-entry results preserving original order
+      entries:  calcResults.flatMap(r => r.entries || []),
+      // Merge breakdown maps by activityType
+      breakdown: (() => {
+        const map: Record<string, number> = {};
+        for (const r of calcResults) {
+          for (const b of (r.breakdown || [])) {
+            map[b.activityType] = (map[b.activityType] || 0) + (b.kg || 0);
+          }
+        }
+        const total = Object.values(map).reduce((s, v) => s + v, 0);
+        return Object.keys(map).map(type => ({
+          activityType: type,
+          kg: map[type],
+          pct: total > 0 ? (map[type] / total) * 100 : 0
+        }));
+      })()
+    };
 
     // 3. Determine the season based on period (YYYY-MM)
     const month = period.split('-')[1];
@@ -43,20 +83,29 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
     else if (['06', '07', '08'].includes(month)) season = 'Summer';
     else if (['09', '10', '11'].includes(month)) season = 'Autumn';
 
-    // 4. Map calculated baselines to correct payload
-    const correctPayload = {
-      entries: entries.map((e, idx) => ({
-        baselineKg: calcData.entries[idx].baselineKg,
-        activityType: e.activityType,
-        region: e.region,
-        equipmentAgeYears: e.equipmentAgeYears || 0,
-        season
-      }))
-    };
+    // 4. Build the correction payload entries (index-aligned with original entries)
+    const correctInputs = entries.map((e, idx) => ({
+      baselineKg: calcData.entries[idx]?.baselineKg ?? 0,
+      activityType: e.activityType,
+      region: e.region,
+      equipmentAgeYears: e.equipmentAgeYears || 0,
+      season
+    }));
 
-    // 5. Call /correct to apply the ML correction model
-    const correctResponse = await axios.post(`${ML_SERVICE_URL}/correct`, correctPayload);
-    const correctData = correctResponse.data; // { correctedTotalKg, correctedEntries: [{ correctedKg }], modelApplied, modelVersion }
+    // 5. Call /correct — chunked
+    const correctChunks = chunkArray(correctInputs, CHUNK_SIZE);
+    const correctResults = await Promise.all(
+      correctChunks.map(chunk =>
+        axios.post(`${ML_SERVICE_URL}/correct`, { entries: chunk }).then(r => r.data)
+      )
+    );
+
+    // Merge chunked correct results
+    const correctData = {
+      modelApplied: correctResults.some(r => r.modelApplied),
+      modelVersion: correctResults[0]?.modelVersion || '1.0.0',
+      correctedEntries: correctResults.flatMap(r => r.correctedEntries || [])
+    };
 
     let scope1Kg = calcData.scope1Kg;
     let scope2Kg = calcData.scope2Kg;
@@ -95,9 +144,36 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
       }));
     }
 
-    // 6. Call /explain to get SHAP values
-    const explainResponse = await axios.post(`${ML_SERVICE_URL}/explain`, correctPayload);
-    const explainData = explainResponse.data; // { topFactors: [{ feature, contributionPct, plainLanguage }] }
+    // 6. Call /explain — chunked (only need first chunk for SHAP, rest are aggregated)
+    const explainChunks = chunkArray(correctInputs, CHUNK_SIZE);
+    const explainResults = await Promise.all(
+      explainChunks.map(chunk =>
+        axios.post(`${ML_SERVICE_URL}/explain`, { entries: chunk }).then(r => r.data)
+      )
+    );
+
+    // Merge SHAP topFactors by averaging contribution percentages across chunks
+    const explainData = (() => {
+      const factorMap: Record<string, { total: number; count: number; plainLanguage: string }> = {};
+      for (const r of explainResults) {
+        for (const f of (r.topFactors || [])) {
+          if (!factorMap[f.feature]) {
+            factorMap[f.feature] = { total: 0, count: 0, plainLanguage: f.plainLanguage || '' };
+          }
+          factorMap[f.feature].total += f.contributionPct || 0;
+          factorMap[f.feature].count += 1;
+        }
+      }
+      const topFactors = Object.entries(factorMap)
+        .map(([feature, v]) => ({
+          feature,
+          contributionPct: v.total / v.count,
+          plainLanguage: v.plainLanguage
+        }))
+        .sort((a, b) => b.contributionPct - a.contributionPct)
+        .slice(0, 10);
+      return { topFactors };
+    })();
 
     // 7. Persist calculation results to database
     const calculationResult = await CalculationResult.findOneAndUpdate(
@@ -232,15 +308,21 @@ export const bulkUploadCSV = async (req: AuthenticatedRequest, res: Response) =>
       uniquePeriods.add(period);
     }
 
-    // Bulk insert entries
-    const result = await ActivityEntry.insertMany(preparedEntries);
+    // Bulk insert entries in batches to avoid MongoDB payload limits
+    const DB_BATCH = 1000;
+    let insertedCount = 0;
+    for (let i = 0; i < preparedEntries.length; i += DB_BATCH) {
+      const batch = preparedEntries.slice(i, i + DB_BATCH);
+      const batchResult = await ActivityEntry.insertMany(batch);
+      insertedCount += batchResult.length;
+    }
 
     // Recalculate emissions for each unique period involved
     for (const period of uniquePeriods) {
       await recalculateEmissions(companyId, period);
     }
 
-    return res.status(201).json({ message: 'Bulk upload completed successfully', count: result.length });
+    return res.status(201).json({ message: 'Bulk upload completed successfully', count: insertedCount });
   } catch (err: any) {
     return res.status(500).json({ error: 'InternalServerError', detail: err.message });
   }
