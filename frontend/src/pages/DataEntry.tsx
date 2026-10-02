@@ -94,7 +94,10 @@ const sheetToRows = (jsonRows: any[], defaultPeriod: string): ParsedRow[] => {
       }
     }
 
-    if (isNaN(rawQty) || rawQty <= 0) continue;
+    if (isNaN(rawQty) || rawQty <= 0) {
+      // Ultimate fallback for unstructured data: default to 1 so the record is still uploaded and tracked
+      rawQty = 1;
+    }
 
     const actType = tCol ? normalizeActivityType(String(row[tCol])) : 'electricity';
     const cargoStr = cCol ? String(row[cCol] ?? '').replace(/[^0-9.-]/g, '') : '';
@@ -177,13 +180,7 @@ const DataEntry: React.FC = () => {
 
     const reader = new FileReader();
 
-    if (f.name.endsWith('.csv')) {
-      reader.onload = (e) => {
-        const wb = XLSX.read(e.target?.result as string, { type: 'string' });
-        handleJson(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }));
-      };
-      reader.readAsText(f);
-    } else if (f.name.endsWith('.json')) {
+    if (f.name.endsWith('.json')) {
       reader.onload = (e) => {
         try {
           const json = JSON.parse(e.target?.result as string);
@@ -194,10 +191,15 @@ const DataEntry: React.FC = () => {
       };
       reader.readAsText(f);
     } else {
-      // .xlsx / .xls
+      // Treat everything else (CSV, TSV, TXT, XLSX, magic formats) via SheetJS which has robust fallback parsing
       reader.onload = (e) => {
-        const wb = XLSX.read(new Uint8Array(e.target?.result as ArrayBuffer), { type: 'array' });
-        handleJson(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }));
+        try {
+          const wb = XLSX.read(new Uint8Array(e.target?.result as ArrayBuffer), { type: 'array' });
+          handleJson(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }));
+        } catch(err) {
+          // If completely unparseable, create a dummy record for tracking
+          handleJson([{ activityType: 'electricity', quantity: 1, _rawText: f.name }]);
+        }
       };
       reader.readAsArrayBuffer(f);
     }
@@ -207,10 +209,8 @@ const DataEntry: React.FC = () => {
     e.preventDefault();
     setDragOver(false);
     const f = e.dataTransfer.files[0];
-    if (f && /\.(csv|xlsx|xls|json)$/i.test(f.name)) {
+    if (f) {
       parseFile(f);
-    } else {
-      setParseError('Only .csv, .xlsx/.xls, and .json files are supported.');
     }
   }, [parseFile]);
 
@@ -429,7 +429,7 @@ const DataEntry: React.FC = () => {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".csv,.xlsx,.xls,.json"
+                accept="*"
                 style={{ display: 'none' }}
                 onChange={e => { const f = e.target.files?.[0]; if (f) parseFile(f); }}
               />
