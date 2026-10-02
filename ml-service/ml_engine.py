@@ -208,7 +208,16 @@ def explain_predictions(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
         if SHAP_AVAILABLE:
             try:
                 explainer = shap.TreeExplainer(regressor)
-                shap_values = explainer.shap_values(X_trans)
+                # Cap explainability computation to 500 randomly sampled rows to prevent SHAP from freezing on massive bulk uploads (e.g., 50,000+ entries)
+                sample_size = min(500, X_trans.shape[0])
+                if X_trans.shape[0] > sample_size:
+                    import random
+                    indices = random.sample(range(X_trans.shape[0]), sample_size)
+                    X_sample = X_trans[indices, :]
+                else:
+                    X_sample = X_trans
+                    
+                shap_values = explainer.shap_values(X_sample)
                 if len(shap_values.shape) > 1:
                     contributions = np.abs(shap_values).mean(axis=0)
                 else:

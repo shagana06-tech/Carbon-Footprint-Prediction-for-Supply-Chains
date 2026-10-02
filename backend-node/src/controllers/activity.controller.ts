@@ -436,10 +436,10 @@ export const bulkUploadCSV = async (req: AuthenticatedRequest, res: Response) =>
       insertedCount += batchResult.length;
     }
 
-    // Recalculate emissions for each unique period involved concurrently
-    await Promise.all(
-      Array.from(uniquePeriods).map(period => recalculateEmissions(companyId, period))
-    );
+    // Recalculate emissions for each unique period involved sequentially to prevent overwhelming the ML service
+    for (const period of uniquePeriods) {
+      await recalculateEmissions(companyId, period);
+    }
 
     return res.status(201).json({ message: 'Bulk upload completed successfully', count: insertedCount });
   } catch (err: any) {
