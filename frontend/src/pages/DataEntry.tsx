@@ -183,6 +183,16 @@ const DataEntry: React.FC = () => {
         handleJson(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' }));
       };
       reader.readAsText(f);
+    } else if (f.name.endsWith('.json')) {
+      reader.onload = (e) => {
+        try {
+          const json = JSON.parse(e.target?.result as string);
+          handleJson(Array.isArray(json) ? json : [json]);
+        } catch (err) {
+          setParseError('Invalid JSON file format.');
+        }
+      };
+      reader.readAsText(f);
     } else {
       // .xlsx / .xls
       reader.onload = (e) => {
@@ -197,10 +207,10 @@ const DataEntry: React.FC = () => {
     e.preventDefault();
     setDragOver(false);
     const f = e.dataTransfer.files[0];
-    if (f && /\.(csv|xlsx|xls)$/i.test(f.name)) {
+    if (f && /\.(csv|xlsx|xls|json)$/i.test(f.name)) {
       parseFile(f);
     } else {
-      setParseError('Only .csv and .xlsx/.xls files are supported.');
+      setParseError('Only .csv, .xlsx/.xls, and .json files are supported.');
     }
   }, [parseFile]);
 
@@ -419,7 +429,7 @@ const DataEntry: React.FC = () => {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".csv,.xlsx,.xls"
+                accept=".csv,.xlsx,.xls,.json"
                 style={{ display: 'none' }}
                 onChange={e => { const f = e.target.files?.[0]; if (f) parseFile(f); }}
               />
@@ -442,7 +452,7 @@ const DataEntry: React.FC = () => {
                   <p style={{ fontWeight: 600, fontSize: '15px', margin: '0 0 6px 0' }}>Drag & drop your file here</p>
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 16px 0' }}>or click to browse files</p>
                   <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                    {['.CSV', '.XLSX', '.XLS'].map(ext => (
+                    {['.CSV', '.XLSX', '.XLS', '.JSON'].map(ext => (
                       <span key={ext} style={{ fontSize: '10px', fontWeight: 700, color: 'var(--primary)', background: 'rgba(16,185,129,0.1)', padding: '4px 10px', borderRadius: '20px' }}>{ext}</span>
                     ))}
                   </div>

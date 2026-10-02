@@ -25,12 +25,18 @@ except ImportError:
 
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "correction_model.joblib")
 
+_cached_pipeline = None
+
 def load_model_pipeline():
+    global _cached_pipeline
     if not XGBOOST_AVAILABLE:
         return None
+    if _cached_pipeline is not None:
+        return _cached_pipeline
     if os.path.exists(MODEL_PATH):
         try:
-            return joblib.load(MODEL_PATH)
+            _cached_pipeline = joblib.load(MODEL_PATH)
+            return _cached_pipeline
         except Exception as e:
             print(f"Error loading model pipeline: {str(e)}")
     return None

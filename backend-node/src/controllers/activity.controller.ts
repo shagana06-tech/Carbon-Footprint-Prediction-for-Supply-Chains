@@ -73,7 +73,7 @@ const chunkArray = <T>(arr: T[], size: number): T[][] => {
   return chunks;
 };
 
-const CHUNK_SIZE = 500; // max entries per ML-service request
+const CHUNK_SIZE = 50000; // max entries per ML-service request (optimized for massive datasets)
 
 // Orchestrates the emissions calculations by contacting the Python ML service
 export const recalculateEmissions = async (companyId: string, period: string) => {
@@ -106,7 +106,7 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
       const calcChunks = chunkArray(rawInputs, CHUNK_SIZE);
       const calcResults = await Promise.all(
         calcChunks.map(chunk =>
-          axios.post(`${ML_SERVICE_URL}/calculate`, { entries: chunk }, { timeout: 3000 }).then(r => r.data)
+          axios.post(`${ML_SERVICE_URL}/calculate`, { entries: chunk }, { timeout: 30000 }).then(r => r.data)
         )
       );
 
@@ -173,7 +173,7 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
         const correctChunks = chunkArray(correctInputs, CHUNK_SIZE);
         const correctResults = await Promise.all(
           correctChunks.map(chunk =>
-            axios.post(`${ML_SERVICE_URL}/correct`, { entries: chunk }, { timeout: 3000 }).then(r => r.data)
+            axios.post(`${ML_SERVICE_URL}/correct`, { entries: chunk }, { timeout: 30000 }).then(r => r.data)
           )
         );
 
@@ -226,7 +226,7 @@ export const recalculateEmissions = async (companyId: string, period: string) =>
         const explainChunks = chunkArray(correctInputs, CHUNK_SIZE);
         const explainResults = await Promise.all(
           explainChunks.map(chunk =>
-            axios.post(`${ML_SERVICE_URL}/explain`, { entries: chunk }, { timeout: 3000 }).then(r => r.data)
+            axios.post(`${ML_SERVICE_URL}/explain`, { entries: chunk }, { timeout: 30000 }).then(r => r.data)
           )
         );
 
@@ -428,7 +428,7 @@ export const bulkUploadCSV = async (req: AuthenticatedRequest, res: Response) =>
     }
 
     // Bulk insert entries in batches to avoid MongoDB payload limits
-    const DB_BATCH = 1000;
+    const DB_BATCH = 10000;
     let insertedCount = 0;
     for (let i = 0; i < preparedEntries.length; i += DB_BATCH) {
       const batch = preparedEntries.slice(i, i + DB_BATCH);
@@ -436,10 +436,10 @@ export const bulkUploadCSV = async (req: AuthenticatedRequest, res: Response) =>
       insertedCount += batchResult.length;
     }
 
-    // Recalculate emissions for each unique period involved
-    for (const period of uniquePeriods) {
-      await recalculateEmissions(companyId, period);
-    }
+    // Recalculate emissions for each unique period involved concurrently
+    await Promise.all(
+      Array.from(uniquePeriods).map(period => recalculateEmissions(companyId, period))
+    );
 
     return res.status(201).json({ message: 'Bulk upload completed successfully', count: insertedCount });
   } catch (err: any) {
