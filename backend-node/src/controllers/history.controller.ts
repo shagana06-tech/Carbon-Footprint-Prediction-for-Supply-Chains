@@ -19,6 +19,7 @@ export const getPredictionHistory = async (req: AuthenticatedRequest, res: Respo
     }
 
     const logs = await PredictionLog.find({ companyId })
+      .select('-prePredictionBaseline.rawEntries')
       .sort({ timestamp: -1 })
       .limit(100);
 

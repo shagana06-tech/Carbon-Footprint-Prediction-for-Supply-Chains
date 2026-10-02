@@ -130,6 +130,26 @@ const PredictionHistory: React.FC = () => {
     }
   };
 
+  const handleSelectLog = async (logId: string) => {
+    if (!token) return;
+    try {
+      // Optimistically show log data from list first
+      const listLog = logs.find(l => l._id === logId);
+      if (listLog) {
+        setSelectedLog(listLog);
+        setActiveTab('pre');
+      }
+      
+      // Fetch full log containing heavy rawEntries array
+      const res = await axios.get(`${API_URL}/history/${logId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setSelectedLog(res.data.log);
+    } catch (err) {
+      showToast('Failed to load full prediction log details', 'error');
+    }
+  };
+
   const filteredLogs = logs.filter(log => 
     log.period.toLowerCase().includes(searchQuery.toLowerCase()) ||
     log.triggerType.toLowerCase().includes(searchQuery.toLowerCase())
@@ -234,7 +254,7 @@ const PredictionHistory: React.FC = () => {
                 return (
                   <tr 
                     key={log._id}
-                    onClick={() => { setSelectedLog(log); setActiveTab('pre'); }}
+                    onClick={() => handleSelectLog(log._id)}
                     style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', transition: 'background 0.2s' }}
                     className="report-item"
                   >
@@ -291,7 +311,7 @@ const PredictionHistory: React.FC = () => {
                     <td style={{ padding: '16px 20px', textAlign: 'center' }}>
                       <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
                         <button 
-                          onClick={(e) => { e.stopPropagation(); setSelectedLog(log); setActiveTab('pre'); }}
+                          onClick={(e) => { e.stopPropagation(); handleSelectLog(log._id); }}
                           className="btn btn-secondary"
                           style={{ padding: '6px 12px', fontSize: '12px' }}
                           title="View Pre-Prediction Log Details"
@@ -469,7 +489,7 @@ const PredictionHistory: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {selectedLog.prePredictionBaseline.rawEntries.map((e, idx) => (
+                        {selectedLog.prePredictionBaseline.rawEntries.slice(0, 50).map((e, idx) => (
                           <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
                             <td style={{ padding: '10px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
                               {getActivityIcon(e.activityType)}
@@ -483,6 +503,13 @@ const PredictionHistory: React.FC = () => {
                             </td>
                           </tr>
                         ))}
+                        {selectedLog.prePredictionBaseline.rawEntries.length > 50 && (
+                          <tr>
+                            <td colSpan={5} style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '11px', background: 'rgba(255,255,255,0.01)' }}>
+                              Showing first 50 of {selectedLog.prePredictionBaseline.rawEntries.length.toLocaleString()} raw entries... (Full export available soon)
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   ) : (

@@ -29,7 +29,12 @@ const connectDB = async (): Promise<void> => {
     throw new Error('MONGODB_URI is not configured');
   }
 
-  await mongoose.connect(MONGO_URI);
+  await mongoose.connect(MONGO_URI, {
+    maxPoolSize: 100,
+    minPoolSize: 10,
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+  });
   isConnected = true;
   logger.info({ message: 'Serverless: MongoDB connected' });
 };
